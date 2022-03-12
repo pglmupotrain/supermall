@@ -1,16 +1,30 @@
 <template>
   <div id="home">
     <nav-bar class="home-nav"><div slot="center">购物街</div></nav-bar>
-    <home-swiper :banners="banners"/>
-    <recommend-view :recommends="recommends"/>
-    <feature-view/>
-    <tab-control class="tab-control"
-                 :titles="['流行','新款','精选']"
-                  @tabClick="tabClickX"/>
-    <goods-list :goods="showGoods"/>
+    <tab-control :titles="['流行','新款','精选']"
+                 @tabClick="tabClickX"
+                 ref="tabcontrol1" v-show="isTabFixed"/>
+    <scroll class="content"
+            ref="scroll"
+            :probe-type="3"
+            @scroll="contentScroll"
+            :pull-up-load="true"
+            @pullingUp="loadMore">
+      <home-swiper :banners="banners" @swiperImageLoad="swiperImageLoad"/>
+      <recommend-view :recommends="recommends"/>
+      <feature-view @featureImageLoad="featureImageLoad"/>
+      <tab-control :titles="['流行','新款','精选']"
+                   @tabClick="tabClickX"
+                    ref="tabcontrol2"
+                    class="tab-control"/>
+      <goods-list :goods="showGoods"/>
+    </scroll>
+
+    <back-top @click.native="backTop" v-show="isShowBackTop"/>
+    <!-- ↑↑ 为什么isShowBackTop没用到{{}}语法？？(可能是和小程序的知识点混淆了)-->
 
     <!-- ul>li{列表$}*100 ，再按'Tab'键-->
-    <ul>
+    <!--<ul>
       <li>列表1</li>
       <li>列表2</li>
       <li>列表3</li>
@@ -111,8 +125,7 @@
       <li>列表98</li>
       <li>列表99</li>
       <li>列表100</li>
-    </ul>
-
+    </ul>-->
   </div>
 </template>
 
@@ -128,6 +141,9 @@ import GoodsList from "components/content/goods/GoodsList";
 //import Swiper from "components/common/swiper/Swiper"
 //import SwiperItem from "components/common/swiper/SwiperItem"
 import {getHomeMultidata, getHomeGoods} from "network/home";
+import Scroll from "components/common/scroll/Scroll";
+import {itemListenerMixin, backTopMixin} from "common/mixin";
+
 
 export default {
   name: "Home",
@@ -136,25 +152,36 @@ export default {
     RecommendView,
     FeatureView,
     NavBar,
+    Scroll,
     TabControl,
-    GoodsList
+    GoodsList,
+
   },
+  mixins: [itemListenerMixin, backTopMixin],
   data() {
     return {
       banners: [],
       recommends: [],
       goods: {
-        'pop': {page: 0, list: []},
-        'new': {page: 0, list: []},
-        'sell': {page: 0, list: []}
+        'pop': {page: 0, list: [], position: -526},
+        'new': {page: 0, list: [], position: -526},
+        'sell': {page: 0, list: [], position: -526}
       },
-      currentType: 'pop'
+      currentType: 'pop',
+      tabOffsetTopArray: [],
+      tabOffsetTop: 0,
+      isTabFixed: false,
+      saveY: 0,
+      typeOrderArray: [0, 0, 0],
+      preType:''
+
     }
   },
   computed: {
     showGoods() {
       return this.goods[this.currentType].list
     }
+
   },
   created() {
     //1.请求多个数据
@@ -163,13 +190,109 @@ export default {
     this.getHomeGoods('pop');
     this.getHomeGoods('new');
     this.getHomeGoods('sell');
+
+  },
+  mounted() {
+
+    /*    //1.对刷新函数refresh进行防抖处理
+        const refresh = debounce(this.$refs.scroll.refresh,500) //注意：老师在第二个班的视频里使用了let,不是const.
+        //↑↑ 注意：由于下面的闭包结构里的refresh对上面这行里的refresh进行了引用，所以上面行的refresh不会被回收。
+        //(↓↓闭包结构↓↓)3.监听item中图片加载完成(监听itemImgLoad事件)
+        this.itemImgListener = () => {
+          refresh()
+        }
+        this.$bus.$on('itemImgLoad', this.itemImgListener)*/
+
+  },
+  destroyed() {
+    console.log('home/destroyed-----');
+  },
+  activated() {
+    //注意：新版的BS2.0，下面的两句代码要互换位置，要先refresh()再滚动到对应的位置。
+    // 疑问：续上句，能不能不要refresh()?
+    this.$refs.scroll.scrollTo(0, this.saveY, 0)
+    this.$refs.scroll.refresh()
+  },
+  deactivated() {
+    //1.保存Y值
+    this.saveY = this.$refs.scroll.getScrollY()
+    //2.取消全局事件的监听
+    this.$bus.$off('itemImgLoad', this.itemImgListener)
+
   },
   methods: {
+    //bug04--老师的bug我来解决
+    /*perPosition(index) {
+      //我的代码 doing
+      this.typeOrderArray.push(index);
+      const tempIndex = this.typeOrderArray[this.typeOrderArray.length-2];
+
+      switch (tempIndex) {
+        case 0:
+          this.preType = 'pop'
+          break
+        case 1:
+          this.preType = 'new'
+          break
+        case 2:
+          this.preType = 'sell'
+          break
+      }
+
+      const yy = this.$refs.scroll.getScrollY();
+      console.log("上一个type对应的y值-----------",yy);
+
+      this.goods[this.preType].position = yy;
+      console.log("preType--------------",this.preType);
+
+      this.$refs.scroll.scrollTo(0, this.goods[this.currentType].position, 0);
+
+      //this.typeOrderArray.shift();
+
+    },*/
+
+    //2.获取tabControl的offsetTop
+    swiperImageLoad() {
+      //老师的代码(bug:出现2个tabControl)
+      //this.tabOffsetTop = this.$refs.tabcontrol2.$el.offsetTop
+
+      //老师留下的bugs我来解决
+      this.tabOffsetTopArray.push(this.$refs.tabcontrol2.$el.offsetTop);
+      this.maxOffsetTop();
+
+    },
+    featureImageLoad() {
+      //老师留下的bugs我来解决
+      this.tabOffsetTopArray.push(this.$refs.tabcontrol2.$el.offsetTop);
+      this.maxOffsetTop();
+
+    },
+    //老师留下的bugs我来解决
+    //获取offsetTopArray里的最大值
+    maxOffsetTop() {
+      const arr = this.tabOffsetTopArray;
+      if (arr.length === 2){
+        let max = arr[0];
+        for(let i = 1; i < arr.length; i++) {
+          let cur = arr[i];
+          cur > max ? max = cur : null
+        }
+        this.tabOffsetTop = max;
+        console.log("home/tabOffsetTop----------------",this.tabOffsetTop);
+      }
+    },
+    /**
+     *  加载更多的方法
+     */
+    loadMore() {
+      console.log('上拉加载更多------');
+      this.getHomeGoods(this.currentType)
+    },
     /**
      * 事件监听相关的方法
      */
     tabClickX(index) {
-      //console.log(index);
+      //console.log('index======>',index);
       switch (index) {
         case 0:
           this.currentType = 'pop'
@@ -180,8 +303,20 @@ export default {
         case 2:
           this.currentType = 'sell'
           break
-
       }
+      this.$refs.tabcontrol1.currentIndex = index;
+      this.$refs.tabcontrol2.currentIndex = index;
+
+      //bug04--老师留下的bug我来解决
+      //this.perPosition(index);
+
+    },
+    contentScroll(position) {
+      //1.判断BackTop是否显示
+      this.listenShowBackTop(position);
+
+      //2.决定tabControl是否吸顶(position:fixed)
+      this.isTabFixed = (-position.y) > this.tabOffsetTop
 
     },
 
@@ -202,6 +337,12 @@ export default {
           //...数组：“数组的解构”的语法
           this.goods[type].list.push(...res.data.list);
           this.goods[type].page += 1;
+
+          //完成上拉加载更多
+          this.$refs.scroll.finishPullUp()
+          //疑问：第181行第一次执行时，还没调用pullingUp就调用finishPullUp是不是不妥？
+          //并且，我在Scroll.vue里的finishPullUp()方法里也没设置 this.scroll && 语句，也不报错，为什么不报错？
+
         }
       )
     }
@@ -211,22 +352,69 @@ export default {
 </script>
 
 <style scoped>
-  #home {
+  /*方案1*/
+/*   #home {
+    height: 100vh;
+  }*/
+
+  /*方案2*/
+/*  #home {
     padding-top: 44px;
+    height: 100vh;
+    position: relative;
+  }*/
+
+  /*方案3*/
+  #home {
+    height: 100vh;
+    position: relative;
   }
+
   .home-nav {
     background-color: var(--color-tint);
     color: #fff;
-    position: fixed;
+
+    /*以下注释的多行代码，方案2需要，方案3则不需要 */
+    /*在使用浏览器原生滚动时，为了让导航不跟随一起滚动*/
+/*  position: fixed;
     left: 0;
     right: 0;
     top: 0;
-    z-index: 9;
+    z-index: 9;*/
+
   }
 
-  .tab-control {
+/*  使用better-scroll后.tab-control样式已失效 */
+/*  .tab-control {
     position: sticky;
     top: 44px;
     z-index: 9;
+  }*/
+
+  /*方案1*/
+/*  .content {
+    height: calc(100% - 93px);
+    overflow: hidden;
+    !*方案1，要把下句代码注释掉。因为.content之上的第二个tabControl(本身高度44px)已经占了44px，
+    就不再需要margin-top:44px。当home.vue里只有一个tabControl时，才需要下面这句代码*!
+    !*margin-top: 44px;*!
+  }*/
+
+  /*方案3*/
+  /*方案2*/
+  .content {
+    overflow: hidden;
+    position: absolute;
+    top: 44px;
+    bottom: 49px;
+    left: 0px;
+    right: 0px;
   }
+
+  .tab-control {
+    position: relative;
+    z-index: 9;
+
+  }
+
 </style>
